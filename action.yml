@@ -1,0 +1,76 @@
+name: Flux Kubeconform
+description: Action to validate Flux configuration
+author: userbradley
+branding:
+  icon: check-circle
+  color: blue
+inputs:
+  directory:
+    description: Name of the directory that contains the kustomization.yaml file to validate
+    required: true
+  kubeconformVersion:
+    description: Version of Kubeconform to download
+    required: false
+    default: v0.6.4
+  kustomizeVersion:
+    description: Version of Kustomize to download
+    required: false
+    default: v5.0.3
+runs:
+  using: composite
+  steps:
+    - name: Cache kustomize
+      id: cache-kustomize
+      uses: actions/cache@v4
+      with:
+        path: /usr/local/bin/kustomize
+        key: kustomize-${{inputs.kustomizeVersion }}
+    - name: Download Kustomize binary
+      if: steps.cache-kubeconform.outputs.cache-hit != 'true'
+      shell: sh
+      run: |
+        wget -q https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${{ inputs.kustomizeVersion }}/kustomize_${{ inputs.kustomizeVersion }}_linux_amd64.tar.gz
+        tar -zxvf kustomize_${{ inputs.kustomizeVersion }}_linux_amd64.tar.gz kustomize
+        mv kustomize /usr/local/bin
+    # [END KUSTOMIZE INSTALL]
+    # [START KUBECONFORM INSTALL]
+    - name: Cache kubeconform
+      id: cache-kubeconform
+      uses: actions/cache@v4
+      with:
+        path: /usr/local/bin/kubeconform
+        key: kubeconform-${{ inputs.kubeconformVersion }}
+    - name: Download kubeconform Binary
+      if: steps.cache-kubeconform.outputs.cache-hit != 'true'
+      shell: sh
+      working-directory: /tmp
+      run: |
+        wget -q https://github.com/yannh/kubeconform/releases/download/${{ inputs.kubeconformVersion }}/kubeconform-linux-amd64.tar.gz
+        tar -zxvf kubeconform-linux-amd64.tar.gz kubeconform
+        mv kubeconform /usr/local/bin
+      #     [END KUBECONFORM INSTALL]
+      #     [START FLUX CRD DOWNLOAD]
+    - name: Get week number
+      id: week-number
+      run: echo "week-number=$(/bin/date "+%U")" >> $GITHUB_OUTPUT
+      shell: sh
+    - name: Cache Flux CRD Schema
+      id: cache-flux
+      uses: actions/cache@v4
+      with:
+        path: /tmp/flux-crd-schemas/master-standalone-strict
+        key: flux-crd-${{ steps.week-number.outputs.week-number }}
+    - name: Make flux CRD download Directory
+      if: steps.cache-flux.outputs.cache-hit != 'true'
+      shell: sh
+      run: mkdir -p /tmp/flux-crd-schemas/master-standalone-strict/
+    - name: Download Flux CRD
+      if: steps.cache-flux.outputs.cache-hit != 'true'
+      shell: sh
+      run: curl -sL https://github.com/fluxcd/flux2/releases/latest/download/crd-schemas.tar.gz | tar zxf - -C /tmp/flux-crd-schemas/master-standalone-strict/
+      #     [END FLUX CRD DOWNLOAD]
+    - name: Validate files
+      shell: sh
+      run: kustomize build | kubeconform "-strict" "-schema-location" "/tmp/flux-crd-schemas" "-summary" "-verbose" "-output" "pretty" "-exit-on-error"
+      # if it doesn't match the flux schema, fail. This action will only be used for flux so if it fails then we have problems
+      working-directory: ${{ inputs.directory }}
